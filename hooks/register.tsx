@@ -1,0 +1,269 @@
+// Custom Discord-style emoji in Claude's replies. The emoji folder's images (folder.ts) are listed for the model
+// in the system prompt with when the person wants each used, drawn as pictures in replies (reply.tsx), and
+// taught in the /emoji-teach pane (teach.tsx). Every call on the engine is made here.
+import { atom, read, update } from 'claude-code'
+import type { EngineInterface, Register } from 'claude-code'
+
+import type { Emoji, EmojiDraft } from '../types'
+import { ENTRIES_FILE, MIME_TYPES, NAME, SVG_LIMIT, isAnimatedWebp, parseEntries, withEntry, wrapImage } from './folder'
+import { hasEmoji } from './markdown'
+import { drawReply } from './reply'
+import { drawTeachPane } from './teach'
+
+const emojis = atom({ plugin: 'discord-emoji', key: 'emojis' } as const, {} as Record<string, Emoji>)
+const folder = atom({ plugin: 'discord-emoji', key: 'folder' } as const, '')
+const page = atom({ plugin: 'discord-emoji', key: 'page' } as const, 0)
+const isUndescribedOnly = atom({ plugin: 'discord-emoji', key: 'isUndescribedOnly' } as const, false)
+const drafts = atom({ plugin: 'discord-emoji', key: 'drafts' } as const, {} as Record<string, EmojiDraft>)
+const notice = atom({ plugin: 'discord-emoji', key: 'notice' } as const, '')
+const shownDrafts = atom({ plugin: 'discord-emoji', key: 'shownDrafts' } as const, {} as Record<string, EmojiDraft>)
+const focused = atom({ plugin: 'discord-emoji', key: 'focused' } as const, '')
+
+const TEACH_PANE = 'emoji-teach'
+const TEACH_TOOL = 'open_emoji_teacher'
+const AUTO_OPENED = 'teachPaneAutoOpened'
+const SVG_SURFACES: readonly string[] = ['desktop', 'mobile', 'vscode']
+
+export const register: Register = (on, options) => {
+  on('session.start', async ($, e, next) => {
+    await $.command.register({ name: 'emoji-reload', description: 'Reloads the custom emoji folder.' })
+    await $.command.register({ name: 'emoji-teach', description: 'Opens a pane to say when Claude should use each emoji.' })
+    await $.tool.register({
+      name: TEACH_TOOL,
+      description: "Opens the emoji teaching pane, where the person says when Claude should use each of their emoji. Call it when they ask to open, launch or show it.",
+      isDeferred: false,
+    })
+    await reload($, options)
+    // The pane opens by itself once, ever, while some emoji has no context yet.
+    const all = Object.values(await read($, emojis))
+    if (!(await $.store.get(AUTO_OPENED)) && all.some(emoji => !emoji.use)) {
+      await $.store.set(AUTO_OPENED, true)
+      void $.ui.open({ id: TEACH_PANE, title: 'Teach emoji' })
+    }
+    return next(e)
+  })
+
+  on('tool.call', { tool: 'mcp__discord-emoji__open_emoji_teacher' }, async $ => {
+    await $.ui.open({ id: TEACH_PANE, title: 'Teach emoji', focus: true })
+    return { result: 'Opened the emoji teaching pane.' }
+  })
+
+  on('command.run', { command: 'emoji-reload' }, async $ => {
+    const { path, count, skipped } = await reload($, options)
+    const lines = [`Loaded ${count} emoji from ${path}.`]
+    if (skipped.length) lines.push(`Skipped: ${skipped.join('; ')}.`)
+    return { text: lines.join('\n') }
+  })
+
+  on('command.run', { command: 'emoji-teach' }, async $ => {
+    await $.ui.open({ id: TEACH_PANE, title: 'Teach emoji', focus: true })
+    return { text: 'Opened the emoji teaching pane.' }
+  })
+
+  on('prompt.compose', async ($, e, next) => {
+    const result = await next(e)
+    const all = Object.values(await read($, emojis))
+    const isDrawn = e.surfaces.some(s => SVG_SURFACES.includes(s))
+    if (!all.length || !isDrawn) return result
+    const section = { id: 'discord-emoji:list', scope: 'session', text: emojiList(all) } as const
+    return { ...result, sections: [...result.sections, section] }
+  })
+
+  on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
+    if (e.surface === 'terminal' || e.props.isSummary) return next(e)
+    const known = await read($, emojis)
+    if (!hasEmoji(e.props.text, known)) return next(e)
+    return drawReply($.ui.resolve(e), e.props.text, known)
+  })
+
+  on('ui.render', { component: 'Pane', requestId: TEACH_PANE }, async ($, e) => {
+    if (e.surface === 'mobile') {
+      const { Text } = $.ui.resolve(e)
+      return <Text>The mobile app has no text fields yet: teach emoji from the desktop app.</Text>
+    }
+    const elements = $.ui.resolve(e)
+    const view = {
+      all: Object.values(await read($, emojis)),
+      // Not `drafts`: a drawing that read it would redraw on every keystroke and move the person's cursor.
+      drafts: await read($, shownDrafts),
+      page: await read($, page),
+      isUndescribedOnly: await read($, isUndescribedOnly),
+      notice: await read($, notice),
+    }
+    const actions = {
+      draft: (file: string, change: EmojiDraft) => updateDraft($, file, change),
+      submit: async (file: string, change: EmojiDraft) => {
+        await updateDraft($, file, change)
+        await save($, file)
+        await showDrafts($)
+      },
+      // A page turn saves what is typed on the page first, and stays put when a name will not do.
+      goTo: async (to: number, files: string[]) => {
+        const isSaved = await saveAll($, files)
+        await showDrafts($)
+        if (isSaved) await update($, page, () => to)
+      },
+      toggleFilter: async () => {
+        await showDrafts($)
+        await update($, isUndescribedOnly, value => !value)
+        await update($, page, () => 0)
+      },
+      finish: () => finish($),
+    }
+    return drawTeachPane({ ...elements, Svg: 'Svg' in elements ? elements.Svg : undefined }, view, actions)
+  })
+
+  // Moving the focus off a field saves that field's emoji.
+  on('ui.focus', { component: 'Pane', requestId: 'emoji-teach' }, async ($, e, next) => {
+    const result = await next(e)
+    if (result.deny !== undefined) return result
+    const left = /^(?:name|use):(.+)$/.exec(await read($, focused))?.[1]
+    await update($, focused, () => e.element ?? '')
+    if (left && (await read($, drafts))[left]) {
+      await save($, left)
+      await showDrafts($)
+    }
+    return result
+  })
+
+  // Closing the pane saves what is typed; an emoji whose name will not do keeps its draft.
+  on('ui.close', { id: 'emoji-teach' }, async ($, e, next) => {
+    await saveAll($)
+    await showDrafts($)
+    await update($, focused, () => '')
+    return next(e)
+  })
+}
+
+async function reload($: EngineInterface, options: Record<string, unknown>) {
+  const path = await emojiFolder($, options)
+  const { loaded, skipped } = await loadEmojis($, path)
+  await update($, folder, () => path)
+  await update($, emojis, () => loaded)
+  return { path, count: Object.keys(loaded).length, skipped }
+}
+
+// The folder the options name, else ~/.claude/emojis.
+async function emojiFolder($: EngineInterface, options: Record<string, unknown>): Promise<string> {
+  const chosen = typeof options.folder === 'string' ? options.folder.trim() : ''
+  if (chosen) return chosen
+  const home = (await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME')) ?? '.'
+  return `${home}/.claude/emojis`
+}
+
+// Every usable image in the folder, by name, and why the others were left out.
+async function loadEmojis($: EngineInterface, path: string) {
+  const loaded: Record<string, Emoji> = {}
+  const skipped: string[] = []
+  const files = await $.fs.list(path).catch(() => [])
+  const { entries, problem } = parseEntries(await $.fs.read(`${path}/${ENTRIES_FILE}`).catch(() => '{}'))
+  if (problem) skipped.push(problem)
+  for (const file of files) {
+    const dot = file.name.lastIndexOf('.')
+    const ext = file.name.slice(dot + 1).toLowerCase()
+    const stem = file.name.slice(0, dot)
+    const mime = MIME_TYPES[ext]
+    if (file.kind !== 'file' || dot <= 0 || !(mime || ext === 'svg')) continue
+    const name = (entries[stem]?.name ?? stem).toLowerCase()
+    const holder = loaded[name]
+    if (!NAME.test(name)) {
+      skipped.push(`${file.name} (a name is 2-32 letters, digits or underscores)`)
+      continue
+    }
+    if (holder) {
+      skipped.push(`${file.name} (:${name}: is already ${holder.file})`)
+      continue
+    }
+    const base64 = mime ? (await $.fs.read(`${path}/${file.name}`, { as: 'bytes' })).base64 : ''
+    const source = mime ? wrapImage(mime, base64) : await $.fs.read(`${path}/${file.name}`)
+    if (source.length > SVG_LIMIT) {
+      skipped.push(`${file.name} (too large; save it at 64 px or smaller)`)
+      continue
+    }
+    const isAnimated = ext === 'gif' || (ext === 'webp' && isAnimatedWebp(base64))
+    const thumb = isAnimated ? await readThumb($, path, stem) : undefined
+    loaded[name] = { name, file: stem, source, isAnimated, thumb, use: entries[stem]?.use }
+  }
+  return { loaded, skipped }
+}
+
+// thumbs/<file>.png as an SVG, when the folder has one.
+async function readThumb($: EngineInterface, path: string, stem: string): Promise<string | undefined> {
+  const bytes = await $.fs.read(`${path}/thumbs/${stem}.png`, { as: 'bytes' }).catch(() => undefined)
+  return bytes ? wrapImage('image/png', bytes.base64) : undefined
+}
+
+async function updateDraft($: EngineInterface, file: string, change: EmojiDraft) {
+  await update($, drafts, all => ({ ...all, [file]: { ...all[file], ...change } }))
+}
+
+// Lets the pane draw the drafts as typed so far.
+async function showDrafts($: EngineInterface) {
+  const typed = await read($, drafts)
+  await update($, shownDrafts, () => typed)
+}
+
+// Saves one emoji's typed name and context to emojis.json; false, with the reason in the pane's notice, when the
+// name will not do or the file cannot be written.
+async function save($: EngineInterface, file: string): Promise<boolean> {
+  const all = await read($, emojis)
+  const emoji = Object.values(all).find(one => one.file === file)
+  if (!emoji) return true
+  const draft = (await read($, drafts))[file] ?? {}
+  const name = (draft.name ?? emoji.name).trim().toLowerCase()
+  const use = (draft.use ?? emoji.use ?? '').trim()
+  const holder = all[name]
+  if (!NAME.test(name)) {
+    await update($, notice, () => `Not saved: :${name}: (for ${file}) is not a name; use 2-32 letters, digits or underscores.`)
+    return false
+  }
+  if (holder && holder.file !== file) {
+    await update($, notice, () => `Not saved: :${name}: (for ${file}) is already the name of ${holder.file}.`)
+    return false
+  }
+  const path = `${await read($, folder)}/${ENTRIES_FILE}`
+  const { entries, problem } = parseEntries(await $.fs.read(path).catch(() => '{}'))
+  if (problem) {
+    await update($, notice, () => `Not saved: ${problem}.`)
+    return false
+  }
+  await $.fs.write(path, withEntry(entries, file, { name: name === file.toLowerCase() ? undefined : name, use }))
+  await update($, emojis, current => {
+    const { [emoji.name]: _, ...rest } = current
+    return { ...rest, [name]: { ...emoji, name, use: use || undefined } }
+  })
+  await update($, drafts, current => {
+    const { [file]: _, ...rest } = current
+    return rest
+  })
+  await update($, notice, () => `Saved :${name}:.`)
+  return true
+}
+
+// Saves the emoji with something typed, of `files` or all; false once one will not save, the reason in the
+// pane's notice.
+async function saveAll($: EngineInterface, files?: string[]): Promise<boolean> {
+  let isSaved = true
+  for (const file of Object.keys(await read($, drafts))) {
+    if (!files || files.includes(file)) isSaved = (await save($, file)) && isSaved
+  }
+  return isSaved
+}
+
+// Saves what is still typed, closes the pane and asks Claude to merge the contexts into the voice guide.
+async function finish($: EngineInterface) {
+  if (!(await saveAll($))) return
+  const path = `${await read($, folder)}/${ENTRIES_FILE}`
+  await $.ui.close({ id: TEACH_PANE })
+  await $.prompt.submit({
+    text: `I finished describing my emoji in the teaching pane. Read the contexts in ${path} and merge them into my output style's voice guide.`,
+  })
+}
+
+function emojiList(all: Emoji[]): string {
+  return [
+    '# Custom emoji',
+    "The person has custom emoji, which their app draws as pictures in the line wherever a reply writes `:name:`, as Discord does. Use them where they fit, in the voice the person's output style asks for, and write only these names, never inside code or code blocks.",
+    ...[...all].sort((a, b) => a.name.localeCompare(b.name)).map(e => `- :${e.name}:${e.use ? ` (use it when ${e.use})` : ''}`),
+  ].join('\n')
+}

@@ -1,0 +1,15 @@
+{
+  "name": "discord-emoji",
+  "version": "0.1.0",
+  "description": "Draws custom Discord-style emoji (:name:) inline in Claude's replies on desktop, from a folder of images.",
+  "author": { "name": "sky" },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "folder": {
+      "type": "string",
+      "title": "Emoji folder",
+      "description": "Folder of emoji images named <name>.png/.gif/.webp/.jpg/.svg; empty means ~/.claude/emojis.",
+      "default": ""
+    }
+  }
+}
