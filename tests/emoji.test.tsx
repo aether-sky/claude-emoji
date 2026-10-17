@@ -1,75 +1,12 @@
-import { describe, expect, mock, test } from 'claude-code/testing'
-import type { Engine } from 'claude-code/testing'
-import type { On } from 'claude-code'
+import { describe, expect, test } from 'claude-code/testing'
 
-const FOLDER = 'C:/home/.claude/emojis'
-// A 1x1 PNG.
-const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
-// The start of an animated WebP: RIFF, VP8X, then an ANIM chunk.
-const ANIMATED_WEBP = 'UklGRkAAAABXRUJQVlA4WAoAAAASAAAAPwAAPwAAQU5JTQYAAAAAAAAAAAA='
+import { ANIMATED_WEBP, COMMAND, PNG, engine, pane, start } from './fake-engine'
+import type { Files } from './fake-engine'
 
-type Files = Record<string, { text?: string; base64?: string }>
 type Piece = { type: string }
 
-// The engine beneath the plugin: a home folder holding `files` (written files land there too), a command
-// registry, panes, submitted prompts, and the engine's own drawing of a reply as a Text reading "engine".
-function engine(on: On, files: Files) {
-  const seen = { prompts: [] as string[], closed: [] as string[], opened: [] as string[] }
-  mock.env(on, { USERPROFILE: 'C:/home' })
-  mock.store(on)
-  on('command.register', ($, e) => ({ value: { command: e.name } }))
-  on('tool.register', ($, e) => ({ value: { tool: `mcp__discord-emoji__${e.name}` } }))
-  on('session.start', ($, e) => ({ cwd: e.cwd }))
-  // The engine hands paths on in the platform's spelling.
-  const slashed = (path: string) => path.replaceAll('\\', '/')
-  const nameIn = (path: string) => {
-    const at = slashed(path)
-    if (!at.startsWith(`${FOLDER}/`)) throw new Error(`outside the folder: ${path}`)
-    return at.slice(FOLDER.length + 1)
-  }
-  on('fs.list', ($, e) => {
-    if (slashed(e.path) !== FOLDER) throw new Error(`no folder ${e.path}`)
-    const here = Object.keys(files).filter(name => !name.includes('/'))
-    return { value: here.map(name => ({ name, kind: 'file' as const, size: 1, mtimeMs: 0, isLink: false })) }
-  })
-  on('fs.read', ($, e) => {
-    const file = files[nameIn(e.path)]
-    if (!file) throw new Error(`no file ${e.path}`)
-    return { value: e.as === 'bytes' ? { base64: file.base64 ?? '' } : (file.text ?? '') }
-  })
-  on('fs.write', ($, e) => {
-    files[nameIn(e.path)] = { text: e.text }
-    return { value: undefined }
-  })
-  on('ui.open', ($, e) => {
-    seen.opened.push(e.id)
-    return { value: { isPlaced: true as const } }
-  })
-  on('ui.close', ($, e) => {
-    seen.closed.push(e.id)
-    return { value: undefined }
-  })
-  on('prompt.submit', ($, e) => {
-    seen.prompts.push(e.text)
-    return { text: e.text }
-  })
-  on('ui.render', { component: 'AssistantMessage' }, ($, e) => {
-    const { Text } = $.ui.resolve(e)
-    return <Text>engine</Text>
-  })
-  return seen
-}
-
-async function start($: Engine) {
-  await $.session.start({ cwd: '.', surface: 'desktop', isInteractive: true })
-}
-
 const reply = (text: string) => ({ component: 'AssistantMessage' as const, props: { text, isFirstOfReply: true } })
-const PANE = {
-  component: 'Pane' as const,
-  requestId: 'emoji-teach',
-  props: { title: 'Teach emoji', isFocused: true, bodyColumns: 80, placement: 'dock' as const, scroll: { offset: 0, bodyRows: 40 }, view: {} },
-}
+const PANE = pane('emoji-teach')
 const entries = (files: Files) => JSON.parse(files['emojis.json']?.text ?? '{}')
 
 describe('drawing replies', () => {
@@ -162,8 +99,7 @@ describe('the model and the folder', () => {
       'notes.txt': { text: 'x' },
     })
     await start($)
-    const presentation = { isFullscreen: false, columns: 80 }
-    const result = await $.command.run({ command: 'emoji-reload', args: '', origin: { kind: 'composer' }, presentation })
+    const result = await $.command.run({ command: 'emoji-reload', ...COMMAND })
     expect(result.text).toContain('Loaded 1 emoji')
     expect(result.text).toContain('Bad-Name.png')
     expect(result.text).toContain('huge.png (too large')

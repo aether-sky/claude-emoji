@@ -17,6 +17,25 @@ export type Emoji = {
 // What the person typed into the teaching pane for one emoji and has not saved yet.
 export type EmojiDraft = { name?: string; use?: string };
 
+// One bullet of the voice guide's Emoji section: the emoji it names and when to use them.
+export type EmojiRule = { names: string[]; text: string };
+
+// A run of rules under one heading line of the Emoji section ("Happy, proud, done:").
+export type EmojiRuleGroup = { title: string; rules: EmojiRule[] };
+
+// The Emoji section of the active output style, as the rules viewer shows it.
+export type EmojiRules = {
+  // The output style's name, from settings.
+  style?: string;
+  // The output style's file.
+  guide?: string;
+  // The section's opening paragraph: how emoji are used in general.
+  intro: string;
+  groups: EmojiRuleGroup[];
+  // Why there are no rules to show, when there are none.
+  problem?: string;
+};
+
 declare module 'claude-code' {
   interface PluginState {
     'discord-emoji': {
@@ -34,6 +53,8 @@ declare module 'claude-code' {
       shownDrafts: Record<string, EmojiDraft>;
       // The key of the pane's field that last took the focus, so moving away from it saves it.
       focused: string;
+      // The rules viewer's content, read when it opens or reloads.
+      rules: EmojiRules;
     };
   }
 }

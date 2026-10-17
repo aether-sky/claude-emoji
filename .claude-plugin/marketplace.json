@@ -1,0 +1,6 @@
+{
+  "name": "discord-emoji",
+  "owner": { "name": "aether-sky" },
+  "description": "The discord-emoji mod: custom emoji drawn inline in Claude's replies.",
+  "plugins": [{ "name": "discord-emoji", "source": "./" }]
+}

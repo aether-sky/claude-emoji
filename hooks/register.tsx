@@ -1,13 +1,16 @@
 // Custom Discord-style emoji in Claude's replies. The emoji folder's images (folder.ts) are listed for the model
-// in the system prompt with when the person wants each used, drawn as pictures in replies (reply.tsx), and
-// taught in the /emoji-teach pane (teach.tsx). Every call on the engine is made here.
+// in the system prompt with when the person wants each used, drawn as pictures in replies (reply.tsx), taught in
+// the /emoji-teach pane (teach.tsx), and the output style's emoji rules are shown in the /emoji-rules pane
+// (rules.ts, rules-pane.tsx). Every call on the engine is made here.
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Emoji, EmojiDraft } from '../types'
+import type { Emoji, EmojiDraft, EmojiRules } from '../types'
 import { ENTRIES_FILE, MIME_TYPES, NAME, SVG_LIMIT, isAnimatedWebp, parseEntries, withEntry, wrapImage } from './folder'
 import { hasEmoji } from './markdown'
 import { drawReply } from './reply'
+import { emojiSection, frontmatterName, parseEmojiRules } from './rules'
+import { drawRulesPane } from './rules-pane'
 import { drawTeachPane } from './teach'
 
 const emojis = atom({ plugin: 'discord-emoji', key: 'emojis' } as const, {} as Record<string, Emoji>)
@@ -18,19 +21,29 @@ const drafts = atom({ plugin: 'discord-emoji', key: 'drafts' } as const, {} as R
 const notice = atom({ plugin: 'discord-emoji', key: 'notice' } as const, '')
 const shownDrafts = atom({ plugin: 'discord-emoji', key: 'shownDrafts' } as const, {} as Record<string, EmojiDraft>)
 const focused = atom({ plugin: 'discord-emoji', key: 'focused' } as const, '')
+const rules = atom({ plugin: 'discord-emoji', key: 'rules' } as const, { intro: '', groups: [] } as EmojiRules)
 
 const TEACH_PANE = 'emoji-teach'
 const TEACH_TOOL = 'open_emoji_teacher'
 const AUTO_OPENED = 'teachPaneAutoOpened'
+const RULES_PANE = 'emoji-rules'
+const RULES_TOOL = 'open_emoji_rules'
+const STYLE_FOLDER = '.claude/output-styles'
 const SVG_SURFACES: readonly string[] = ['desktop', 'mobile', 'vscode']
 
 export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'emoji-reload', description: 'Reloads the custom emoji folder.' })
     await $.command.register({ name: 'emoji-teach', description: 'Opens a pane to say when Claude should use each emoji.' })
+    await $.command.register({ name: 'emoji-rules', description: "Shows the output style's emoji rules with their pictures." })
     await $.tool.register({
       name: TEACH_TOOL,
       description: "Opens the emoji teaching pane, where the person says when Claude should use each of their emoji. Call it when they ask to open, launch or show it.",
+      isDeferred: false,
+    })
+    await $.tool.register({
+      name: RULES_TOOL,
+      description: "Opens the emoji rules viewer: the output style's emoji rules beside each emoji's picture. Call it when the person asks to see the emoji rules.",
       isDeferred: false,
     })
     await reload($, options)
@@ -46,6 +59,22 @@ export const register: Register = (on, options) => {
   on('tool.call', { tool: 'mcp__discord-emoji__open_emoji_teacher' }, async $ => {
     await $.ui.open({ id: TEACH_PANE, title: 'Teach emoji', focus: true })
     return { result: 'Opened the emoji teaching pane.' }
+  })
+
+  on('tool.call', { tool: 'mcp__discord-emoji__open_emoji_rules' }, async $ => {
+    await showRules($)
+    return { result: 'Opened the emoji rules viewer.' }
+  })
+
+  on('command.run', { command: 'emoji-rules' }, async $ => {
+    await showRules($)
+    return { text: 'Opened the emoji rules viewer.' }
+  })
+
+  on('ui.render', { component: 'Pane', requestId: 'emoji-rules' }, async ($, e) => {
+    const elements = $.ui.resolve(e)
+    const view = { ...elements, Svg: 'Svg' in elements ? elements.Svg : undefined }
+    return drawRulesPane(view, await read($, rules), await read($, emojis), () => loadRules($))
   })
 
   on('command.run', { command: 'emoji-reload' }, async $ => {
@@ -133,6 +162,39 @@ export const register: Register = (on, options) => {
     await update($, focused, () => '')
     return next(e)
   })
+}
+
+// Reads the rules again and opens the viewer.
+async function showRules($: EngineInterface) {
+  await loadRules($)
+  await $.ui.open({ id: RULES_PANE, title: 'Emoji rules', focus: true })
+}
+
+async function loadRules($: EngineInterface) {
+  const loaded = await readRules($)
+  await update($, rules, () => loaded)
+}
+
+// The Emoji section of the output style the settings choose, from the project's or the person's
+// .claude/output-styles folder, as the engine looks for styles.
+async function readRules($: EngineInterface): Promise<EmojiRules> {
+  const none = { intro: '', groups: [] }
+  const settings = await $.settings.read({})
+  const style = typeof settings.outputStyle === 'string' ? settings.outputStyle : undefined
+  if (!style) return { ...none, problem: 'No output style is chosen in the settings.' }
+  const home = (await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME')) ?? '.'
+  for (const dir of [STYLE_FOLDER, `${home}/${STYLE_FOLDER}`]) {
+    for (const file of await $.fs.list(dir).catch(() => [])) {
+      if (file.kind !== 'file' || !file.name.endsWith('.md')) continue
+      const guide = `${dir}/${file.name}`
+      const text = await $.fs.read(guide)
+      if (frontmatterName(text) !== style) continue
+      const section = emojiSection(text)
+      if (section === undefined) return { ...none, style, guide, problem: 'This output style has no "## Emoji" section.' }
+      return { style, guide, ...parseEmojiRules(section) }
+    }
+  }
+  return { ...none, style, problem: `No file in ${STYLE_FOLDER} is the output style "${style}".` }
 }
 
 async function reload($: EngineInterface, options: Record<string, unknown>) {

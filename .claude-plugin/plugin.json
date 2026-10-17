@@ -1,7 +1,7 @@
 {
   "name": "discord-emoji",
-  "version": "0.1.0",
-  "description": "Draws custom Discord-style emoji (:name:) inline in Claude's replies on desktop, from a folder of images.",
+  "version": "0.2.0",
+  "description": "Draws custom Discord-style emoji (:name:) inline in Claude's replies on desktop, from a folder of images, with panes to teach when to use each and to view the output style's emoji rules.",
   "author": { "name": "sky" },
   "types": "./types/index.d.ts",
   "userConfig": {
