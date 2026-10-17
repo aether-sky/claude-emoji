@@ -1,4 +1,4 @@
-# discord-emoji
+# claude-emoji
 
 A Claude Code mod that gives Claude custom emoji, the way Discord does. Put emoji images in a folder, say when each one fits, and Claude writes `:name:` in its replies; the desktop Code tab draws the picture in the line.
 
@@ -7,8 +7,8 @@ A Claude Code mod that gives Claude custom emoji, the way Discord does. Put emoj
 In Claude Code, add this repo as a marketplace, then install the mod from it:
 
 ```
-/plugin marketplace add aether-sky/discord-emoji
-/plugin install discord-emoji@discord-emoji
+/plugin marketplace add aether-sky/claude-emoji
+/plugin install inline-emoji@claude-emoji
 ```
 
 ## The emoji folder

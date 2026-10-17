@@ -13,15 +13,15 @@ import { emojiSection, frontmatterName, parseEmojiRules } from './rules'
 import { drawRulesPane } from './rules-pane'
 import { drawTeachPane } from './teach'
 
-const emojis = atom({ plugin: 'discord-emoji', key: 'emojis' } as const, {} as Record<string, Emoji>)
-const folder = atom({ plugin: 'discord-emoji', key: 'folder' } as const, '')
-const page = atom({ plugin: 'discord-emoji', key: 'page' } as const, 0)
-const isUndescribedOnly = atom({ plugin: 'discord-emoji', key: 'isUndescribedOnly' } as const, false)
-const drafts = atom({ plugin: 'discord-emoji', key: 'drafts' } as const, {} as Record<string, EmojiDraft>)
-const notice = atom({ plugin: 'discord-emoji', key: 'notice' } as const, '')
-const shownDrafts = atom({ plugin: 'discord-emoji', key: 'shownDrafts' } as const, {} as Record<string, EmojiDraft>)
-const focused = atom({ plugin: 'discord-emoji', key: 'focused' } as const, '')
-const rules = atom({ plugin: 'discord-emoji', key: 'rules' } as const, { intro: '', groups: [] } as EmojiRules)
+const emojis = atom({ plugin: 'inline-emoji', key: 'emojis' } as const, {} as Record<string, Emoji>)
+const folder = atom({ plugin: 'inline-emoji', key: 'folder' } as const, '')
+const page = atom({ plugin: 'inline-emoji', key: 'page' } as const, 0)
+const isUndescribedOnly = atom({ plugin: 'inline-emoji', key: 'isUndescribedOnly' } as const, false)
+const drafts = atom({ plugin: 'inline-emoji', key: 'drafts' } as const, {} as Record<string, EmojiDraft>)
+const notice = atom({ plugin: 'inline-emoji', key: 'notice' } as const, '')
+const shownDrafts = atom({ plugin: 'inline-emoji', key: 'shownDrafts' } as const, {} as Record<string, EmojiDraft>)
+const focused = atom({ plugin: 'inline-emoji', key: 'focused' } as const, '')
+const rules = atom({ plugin: 'inline-emoji', key: 'rules' } as const, { intro: '', groups: [] } as EmojiRules)
 
 const TEACH_PANE = 'emoji-teach'
 const TEACH_TOOL = 'open_emoji_teacher'
@@ -56,12 +56,12 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  on('tool.call', { tool: 'mcp__discord-emoji__open_emoji_teacher' }, async $ => {
+  on('tool.call', { tool: 'mcp__inline-emoji__open_emoji_teacher' }, async $ => {
     await $.ui.open({ id: TEACH_PANE, title: 'Teach emoji', focus: true })
     return { result: 'Opened the emoji teaching pane.' }
   })
 
-  on('tool.call', { tool: 'mcp__discord-emoji__open_emoji_rules' }, async $ => {
+  on('tool.call', { tool: 'mcp__inline-emoji__open_emoji_rules' }, async $ => {
     await showRules($)
     return { result: 'Opened the emoji rules viewer.' }
   })
@@ -94,7 +94,7 @@ export const register: Register = (on, options) => {
     const all = Object.values(await read($, emojis))
     const isDrawn = e.surfaces.some(s => SVG_SURFACES.includes(s))
     if (!all.length || !isDrawn) return result
-    const section = { id: 'discord-emoji:list', scope: 'session', text: emojiList(all) } as const
+    const section = { id: 'inline-emoji:list', scope: 'session', text: emojiList(all) } as const
     return { ...result, sections: [...result.sections, section] }
   })
 

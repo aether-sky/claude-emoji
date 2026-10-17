@@ -38,7 +38,7 @@ export type EmojiRules = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'discord-emoji': {
+    'inline-emoji': {
       // By name.
       emojis: Record<string, Emoji>;
       // The emoji folder the emojis were read from.

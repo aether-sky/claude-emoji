@@ -23,7 +23,7 @@ export function engine(on: On, files: Files, { styles = {}, outputStyle = 'Tadai
   mock.store(on)
   on('settings.read', () => ({ value: { outputStyle } }))
   on('command.register', ($, e) => ({ value: { command: e.name } }))
-  on('tool.register', ($, e) => ({ value: { tool: `mcp__discord-emoji__${e.name}` } }))
+  on('tool.register', ($, e) => ({ value: { tool: `mcp__inline-emoji__${e.name}` } }))
   on('session.start', ($, e) => ({ cwd: e.cwd }))
   // The engine hands paths on in the platform's spelling.
   const slashed = (path: string) => path.replaceAll('\\', '/')
