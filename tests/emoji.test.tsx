@@ -72,10 +72,10 @@ describe('drawing replies', () => {
   })
 
   test('an emoji renamed in emojis.json answers to its new name', async ($, on) => {
-    engine(on, { '1198057303186870303.png': { base64: PNG }, 'emojis.json': { text: '{"1198057303186870303": {"name": "smoke"}}' } })
+    engine(on, { 'party-cat.png': { base64: PNG }, 'emojis.json': { text: '{"party-cat": {"name": "partycat"}}' } })
     await start($)
-    const ui = await $.ui.mount({ plugin: 'inline-emoji', surface: 'desktop', ...reply('ok :smoke:') })
-    expect((await ui.find({ type: 'Svg' }))?.props.alt).toBe(':smoke:')
+    const ui = await $.ui.mount({ plugin: 'inline-emoji', surface: 'desktop', ...reply('ok :partycat:') })
+    expect((await ui.find({ type: 'Svg' }))?.props.alt).toBe(':partycat:')
   })
 })
 

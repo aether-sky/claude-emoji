@@ -17,7 +17,7 @@ export type Files = Record<string, { text?: string; base64?: string }>
 
 export type Setup = { styles?: Files; outputStyle?: string }
 
-export function engine(on: On, files: Files, { styles = {}, outputStyle = 'Tadaima voice' }: Setup = {}) {
+export function engine(on: On, files: Files, { styles = {}, outputStyle = 'Test voice' }: Setup = {}) {
   const seen = { prompts: [] as string[], closed: [] as string[], opened: [] as string[] }
   mock.env(on, { USERPROFILE: 'C:/home' })
   mock.store(on)

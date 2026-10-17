@@ -19,7 +19,7 @@ The mod reads `~/.claude/emojis` (or the folder set in the plugin's `folder` opt
 - `emojis.json`, optional: by file name without its extension, the name to use when it is not the file's, and when to use the emoji. A plain string is read as the "when".
 
   ```json
-  { "party-cat": { "name": "partycat", "use": "celebrating" }, "hmph": "annoyed" }
+  { "party-cat": { "name": "partycat", "use": "a party" }, "hmph": "grumpy" }
   ```
 
 - `thumbs/<file>.png`, optional: a still picture of an animated emoji for the panes.
@@ -40,10 +40,10 @@ The viewer reads this shape from the output style's markdown: an opening paragra
 
 ```markdown
 ## Emoji
-Write them inline as `:name:`. At most two in a whole reply.
+Use them inline as `:name:`, one now and then.
 
-Happy, proud, done:
-- `:garf:` or `:mikudab:` satisfied, accomplished
+Good news:
+- `:tada:` or `:yay:` something worked
 ```
 
 ## What draws where

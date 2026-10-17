@@ -1,7 +1,7 @@
 // Reading the emoji rules out of an output style: its "## Emoji" section is an opening paragraph, then groups,
 // each a line ending in a colon followed by bullets that name emoji in backticks and say when to use them:
-//   Happy, proud, done:
-//   - `:garf:` or `:mikudab:` satisfied, accomplished
+//   Good news:
+//   - `:tada:` or `:yay:` something worked
 import type { Emoji, EmojiRuleGroup, EmojiRules } from '../types'
 
 const NAMED = /`:([a-z0-9_]{2,32}):`/g

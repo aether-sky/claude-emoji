@@ -20,7 +20,7 @@ export type EmojiDraft = { name?: string; use?: string };
 // One bullet of the voice guide's Emoji section: the emoji it names and when to use them.
 export type EmojiRule = { names: string[]; text: string };
 
-// A run of rules under one heading line of the Emoji section ("Happy, proud, done:").
+// A run of rules under one heading line of the Emoji section ("Good news:").
 export type EmojiRuleGroup = { title: string; rules: EmojiRule[] };
 
 // The Emoji section of the active output style, as the rules viewer shows it.
