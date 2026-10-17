@@ -14,14 +14,17 @@ export type Item = { text: string; marker: string; indent: number; isHeading: bo
 
 export type Style = { bold: boolean; italic: boolean; strike: boolean; dim: boolean; isCode: boolean; href?: string }
 
-// One piece of a drawn line: a word with its style (a space before it written as a no-break space, which a
-// wrapping row keeps), or an emoji.
-export type Atom = { kind: 'word'; text: string; style: Style } | { kind: 'emoji'; emoji: Emoji }
+// One piece of a drawn line: a word with its style, or an emoji. A space after either belongs to it (as a
+// no-break space for a word), so a wrapped line starts with no space.
+export type Atom = { kind: 'word'; text: string; style: Style } | { kind: 'emoji'; emoji: Emoji; isSpaced?: boolean }
 
 export const PLAIN: Style = { bold: false, italic: false, strike: false, dim: false, isCode: false }
 
 const TOKEN = /:([A-Za-z0-9_]{2,32}):/g
-const NBSP = String.fromCharCode(0xa0)
+export const NBSP = String.fromCharCode(0xa0)
+const FENCE = /^\s*(```|~~~)/
+// A table's delimiter row, which markdown draws and a line of words cannot.
+const TABLE_RULE = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$/m
 
 export function hasEmoji(text: string, known: Known): boolean {
   for (const m of text.matchAll(TOKEN)) if (known[group(m, 1).toLowerCase()]) return true
@@ -33,36 +36,50 @@ export function isOnlyEmoji(text: string, known: Known): boolean {
   return rest.trim() === ''
 }
 
-// The text's blocks (separated by blank lines; a fenced code block is one block), with runs of blocks that hold
-// no emoji joined back into one markdown text.
+// The text's blocks (separated by blank lines; a fenced code block is a block of its own), with runs of blocks
+// that hold no emoji, or are code or a table, joined back into one markdown text.
 export function groupBlocks(text: string, known: Known) {
   const blocks: { text: string; isFenced: boolean }[] = []
   let lines: string[] = []
   let isFenced = false
-  let hasFence = false
-  const flush = () => {
-    if (lines.length) blocks.push({ text: lines.join('\n'), isFenced: hasFence })
+  const flush = (isFence: boolean) => {
+    if (lines.length) blocks.push({ text: lines.join('\n'), isFenced: isFence })
     lines = []
-    hasFence = false
   }
   for (const line of text.split('\n')) {
-    if (/^\s*(```|~~~)/.test(line)) {
-      isFenced = !isFenced
-      hasFence = true
-    }
-    if (!isFenced && line.trim() === '') flush()
+    if (FENCE.test(line) && !isFenced) {
+      flush(false)
+      lines.push(line)
+      isFenced = true
+    } else if (FENCE.test(line)) {
+      lines.push(line)
+      flush(true)
+      isFenced = false
+    } else if (!isFenced && line.trim() === '') flush(false)
     else lines.push(line)
   }
-  flush()
+  flush(isFenced)
 
   const groups: { kind: 'markdown' | 'emoji'; text: string }[] = []
+  // Whether the block is indented under a list item drawn above as emoji, where on its own it would read as code.
+  let isUnderEmoji = false
   for (const block of blocks) {
-    const kind = !block.isFenced && hasEmoji(block.text.replace(/`[^`]*`/g, ''), known) ? 'emoji' : 'markdown'
+    const isMarkdownOnly = block.isFenced || TABLE_RULE.test(block.text)
+    const kind = !isMarkdownOnly && hasEmoji(block.text.replace(/`[^`]*`/g, ''), known) ? 'emoji' : 'markdown'
+    isUnderEmoji = kind === 'markdown' && (groups[groups.length - 1]?.kind === 'emoji' || isUnderEmoji) && /^\s/.test(block.text)
+    const text = isUnderEmoji ? dedented(block.text) : block.text
     const last = groups[groups.length - 1]
-    if (kind === 'markdown' && last?.kind === 'markdown') last.text += `\n\n${block.text}`
-    else groups.push({ kind, text: block.text })
+    if (kind === 'markdown' && last?.kind === 'markdown') last.text += `\n\n${text}`
+    else groups.push({ kind, text })
   }
   return groups
+}
+
+// The lines with the indentation they all share removed.
+function dedented(text: string): string {
+  const lines = text.split('\n')
+  const indent = Math.min(...lines.filter(line => line.trim()).map(line => /^\s*/.exec(line)?.[0].length ?? 0))
+  return lines.map(line => line.slice(Math.min(indent, /^\s*/.exec(line)?.[0].length ?? 0))).join('\n')
 }
 
 // A block's lines as items: list entries, headings and quotes start one; other lines continue the item above,
@@ -114,6 +131,9 @@ export function parseInline(s: string, known: Known): Run[] {
       runs.push(...flushed(), { kind: 'link', href: group(m, 2), runs: parseInline(group(m, 1), known) })
     } else if ((m = /^https?:\/\/[^\s<>()]*[^\s<>().,;:!?'"*_~]/.exec(rest)) && !/\w/.test(before)) {
       runs.push(...flushed(), { kind: 'link', href: m[0], runs: [{ kind: 'text', text: m[0] }] })
+    } else if ((m = /^(\*\*\*|___)(?=\S)([\s\S]*?\S)\1/.exec(rest)) && (group(m, 1) === '***' || !/\w/.test(before))) {
+      const italic: Run = { kind: 'style', style: 'italic', runs: parseInline(group(m, 2), known) }
+      runs.push(...flushed(), { kind: 'style', style: 'bold', runs: [italic] })
     } else if ((m = /^(\*\*|__)(?=\S)([\s\S]*?\S)\1/.exec(rest)) && (group(m, 1) === '**' || !/\w/.test(before))) {
       runs.push(...flushed(), { kind: 'style', style: 'bold', runs: parseInline(group(m, 2), known) })
     } else if ((m = /^~~(?=\S)([\s\S]*?\S)~~/.exec(rest))) {
@@ -146,9 +166,9 @@ export function toAtoms(runs: Run[], base: Style): Atom[] {
   const atoms: Atom[] = []
   let isSpaced = false
   const push = (atom: Atom) => {
-    if (isSpaced && atoms.length) {
-      if (atom.kind === 'word') atom = { ...atom, text: NBSP + atom.text }
-      else atoms.push({ kind: 'word', text: NBSP, style: base })
+    const last = atoms[atoms.length - 1]
+    if (isSpaced && last) {
+      atoms[atoms.length - 1] = last.kind === 'word' ? { ...last, text: last.text + NBSP } : { ...last, isSpaced: true }
     }
     isSpaced = false
     atoms.push(atom)

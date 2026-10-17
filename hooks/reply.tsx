@@ -3,7 +3,7 @@
 // each line is a wrapping row of its words and pictures.
 import type { Elements } from 'claude-code'
 
-import { PLAIN, groupBlocks, isOnlyEmoji, lineItems, parseInline, toAtoms } from './markdown'
+import { NBSP, PLAIN, groupBlocks, isOnlyEmoji, lineItems, parseInline, toAtoms } from './markdown'
 import type { Atom, Item, Known } from './markdown'
 
 export type ReplyElements = Pick<Elements['desktop'], 'Box' | 'Text' | 'Svg' | 'Link' | 'Markdown'>
@@ -16,11 +16,19 @@ export function drawReply({ Box, Text, Svg, Link, Markdown }: ReplyElements, tex
   const drawAtom = (atom: Atom, px: number) => {
     if (atom.kind === 'emoji') {
       const { name, source, isAnimated } = atom.emoji
-      return <Svg source={source} alt={`:${name}:`} width={px} height={px} isInteractive={isAnimated || undefined} />
+      const svg = <Svg source={source} alt={`:${name}:`} width={px} height={px} isInteractive={isAnimated || undefined} />
+      if (!atom.isSpaced) return svg
+      return (
+        <Box flexDirection="row" alignItems="center">
+          {svg}
+          <Text>{NBSP}</Text>
+        </Box>
+      )
     }
     const { style } = atom
-    if (style.href) return <Link href={style.href}>{atom.text}</Link>
-    return (
+    // The desktop's Link opens https: alone; markdown keeps any other link, like a localhost one, clickable.
+    if (style.href && !style.href.startsWith('https:')) return <Markdown text={`[${escaped(atom.text)}](<${style.href}>)`} />
+    const text = (
       <Text
         bold={style.bold || undefined}
         italic={style.italic || undefined}
@@ -31,6 +39,7 @@ export function drawReply({ Box, Text, Svg, Link, Markdown }: ReplyElements, tex
         {atom.text}
       </Text>
     )
+    return style.href ? <Link href={style.href}>{text}</Link> : text
   }
 
   const drawItem = (item: Item, px: number) => (
@@ -52,4 +61,9 @@ export function drawReply({ Box, Text, Svg, Link, Markdown }: ReplyElements, tex
       {parts}
     </Box>
   )
+}
+
+// The text with markdown's inline punctuation escaped, to stand as a link's text.
+function escaped(text: string): string {
+  return text.replace(/[\\`*_[\]<>~]/g, '\\$&')
 }

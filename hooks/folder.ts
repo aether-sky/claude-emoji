@@ -18,15 +18,17 @@ export const MIME_TYPES: Record<string, string> = {
 
 export type Entry = { name?: string; use?: string }
 
-export function parseEntries(text: string): { entries: Record<string, Entry>; problem?: string } {
+// emojis.json's entries, and the file's object as read, which a save writes back with one entry changed.
+export function parseEntries(text: string): { entries: Record<string, Entry>; raw: Record<string, unknown>; problem?: string } {
   let parsed: unknown
   try {
-    parsed = JSON.parse(text)
+    // A byte order mark, as Notepad and Windows PowerShell write, is not part of the JSON.
+    parsed = JSON.parse(text.charCodeAt(0) === 0xfeff ? text.slice(1) : text)
   } catch {
-    return { entries: {}, problem: `${ENTRIES_FILE} (not valid JSON)` }
+    return { entries: {}, raw: {}, problem: `${ENTRIES_FILE} (not valid JSON)` }
   }
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    return { entries: {}, problem: `${ENTRIES_FILE} (expected an object keyed by file name)` }
+    return { entries: {}, raw: {}, problem: `${ENTRIES_FILE} (expected an object keyed by file name)` }
   }
   const entries: Record<string, Entry> = {}
   for (const [file, value] of Object.entries(parsed)) {
@@ -36,16 +38,18 @@ export function parseEntries(text: string): { entries: Record<string, Entry>; pr
       entries[file] = { name: typeof name === 'string' ? name : undefined, use: typeof use === 'string' ? use : undefined }
     }
   }
-  return { entries }
+  return { entries, raw: parsed as Record<string, unknown> }
 }
 
-// emojis.json's text with one file's entry replaced; an entry with nothing in it is removed.
-export function withEntry(entries: Record<string, Entry>, file: string, entry: Entry): string {
-  const next = { ...entries }
-  const kept: Entry = {}
-  if (entry.name) kept.name = entry.name
-  if (entry.use) kept.use = entry.use
-  if (kept.name || kept.use) next[file] = kept
+// emojis.json's text with one file's name and use replaced, everything else as read; an entry left with
+// nothing in it is removed.
+export function withEntry(raw: Record<string, unknown>, file: string, entry: Entry): string {
+  const next = { ...raw }
+  const old = raw[file]
+  const { name: _name, use: _use, ...rest } =
+    typeof old === 'object' && old !== null && !Array.isArray(old) ? (old as Record<string, unknown>) : {}
+  const kept = { ...(entry.name ? { name: entry.name } : {}), ...(entry.use ? { use: entry.use } : {}), ...rest }
+  if (Object.keys(kept).length) next[file] = kept
   else delete next[file]
   const sorted = Object.fromEntries(Object.entries(next).sort(([a], [b]) => a.localeCompare(b)))
   return `${JSON.stringify(sorted, null, 2)}\n`
@@ -59,13 +63,18 @@ export function wrapImage(mime: string, base64: string): string {
   )
 }
 
-// An animated WebP carries an ANIM chunk after its VP8X header, within its first 64 bytes.
+// How long an image file of `size` bytes is once wrapped for an Svg element.
+export function wrappedLength(mime: string | undefined, size: number): number {
+  return mime ? wrapImage(mime, '').length + Math.ceil(size / 3) * 4 : size
+}
+
+// An animated WebP is an extended one (a VP8X chunk first) with the animation flag set in that chunk's flags.
 export function isAnimatedWebp(base64: string): boolean {
   const digits = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
   let text = ''
-  for (let i = 0; i + 4 <= 88 && i + 4 <= base64.length; i += 4) {
+  for (let i = 0; i + 4 <= 32 && i + 4 <= base64.length; i += 4) {
     const n = [...base64.slice(i, i + 4)].reduce((sum, c) => sum * 64 + Math.max(0, digits.indexOf(c)), 0)
     text += String.fromCharCode((n >> 16) & 255, (n >> 8) & 255, n & 255)
   }
-  return text.includes('ANIM')
+  return text.slice(12, 16) === 'VP8X' && (text.charCodeAt(20) & 0x02) !== 0
 }

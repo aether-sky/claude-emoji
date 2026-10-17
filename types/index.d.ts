@@ -20,8 +20,8 @@ export type EmojiDraft = { name?: string; use?: string };
 // One bullet of the voice guide's Emoji section: the emoji it names and when to use them.
 export type EmojiRule = { names: string[]; text: string };
 
-// A run of rules under one heading line of the Emoji section ("Good news:").
-export type EmojiRuleGroup = { title: string; rules: EmojiRule[] };
+// A run of rules under one title of the Emoji section ("Good news:"), and the paragraphs that follow them.
+export type EmojiRuleGroup = { title: string; rules: EmojiRule[]; notes: string[] };
 
 // The Emoji section of the active output style, as the rules viewer shows it.
 export type EmojiRules = {
@@ -43,8 +43,9 @@ declare module 'claude-code' {
       emojis: Record<string, Emoji>;
       // The emoji folder the emojis were read from.
       folder: string;
-      // The teaching pane's page, its filter, unsaved typing by file, and its last message.
-      page: number;
+      // The teaching pane's page (where in its list the page starts), its filter, unsaved typing by file, and its
+      // last message.
+      pageStart: number;
       isUndescribedOnly: boolean;
       drafts: Record<string, EmojiDraft>;
       notice: string;

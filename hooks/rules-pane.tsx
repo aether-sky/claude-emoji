@@ -60,6 +60,9 @@ export function drawRulesPane(
         <Box flexDirection="column">
           {group.title ? <Text bold>{group.title}</Text> : null}
           {group.rules.map(row)}
+          {group.notes.map(note => (
+            <Text>{note}</Text>
+          ))}
         </Box>
       ))}
       <Box flexDirection="row">

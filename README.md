@@ -13,7 +13,7 @@ In Claude Code, add this repo as a marketplace, then install the mod from it:
 
 ## The emoji folder
 
-The mod reads `~/.claude/emojis` (or the folder set in the plugin's `folder` option):
+The mod reads `~/.claude/emojis`, or the folder set in the plugin's `folder` option (where `~` is your home folder):
 
 - One image per emoji, named after it: `hmph.png`. Names are 2-32 lowercase letters, digits or underscores. PNG, GIF, WebP, JPEG and SVG load; animated GIF and WebP move.
 - `emojis.json`, optional: by file name without its extension, the name to use when it is not the file's, and when to use the emoji. A plain string is read as the "when".
@@ -24,11 +24,11 @@ The mod reads `~/.claude/emojis` (or the folder set in the plugin's `folder` opt
 
 - `thumbs/<file>.png`, optional: a still picture of an animated emoji for the panes.
 
-Keep each image small: the mod skips one whose picture is over about 96 KB, and the desktop stops drawing new pictures after a session has drawn about 750 KB of them. 48 px images are plenty.
+Keep each image small: the mod skips an image file over about 96 KB (an SVG over 128 KB), and the desktop stops drawing new pictures once a session has drawn about 550 KB of image files. 48 px images are plenty.
 
 ## Commands
 
-- `/emoji-teach` opens a pane listing every emoji with its picture, a name field and a "use it when" field. What you type saves on Enter, on moving to another field, on a page turn and when the pane closes. **Done, teach Claude** asks Claude to merge what you wrote into your output style.
+- `/emoji-teach` opens a pane listing every emoji with its picture, a name field and a "use it when" field. What you type saves on Enter, on moving to another field, on a page turn, when the pane closes and when the session ends. **Done, teach Claude** asks Claude to merge what you wrote into your output style.
 - `/emoji-rules` opens a viewer of the emoji rules Claude follows: the `## Emoji` section of the output style your settings choose, each rule beside the pictures of the emoji it names. It flags rules that name an emoji missing from the folder, and emoji you gave a context that no rule mentions yet.
 - `/emoji-reload` reads the emoji folder again and says which files it skipped.
 
@@ -36,7 +36,7 @@ Claude can open either pane for you when you ask.
 
 ## The Emoji section
 
-The viewer reads this shape from the output style's markdown: an opening paragraph, then groups, each a line ending in a colon followed by bullets that name emoji in backticks.
+The viewer reads this shape from the output style's markdown: an opening paragraph, then groups, each titled by a line ending in a colon (or a `###` heading) and followed by bullets (`-`, `*`, `+` or numbered) that name emoji in backticks. A paragraph after a group's bullets shows under that group.
 
 ```markdown
 ## Emoji

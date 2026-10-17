@@ -3,19 +3,19 @@
 // the /emoji-teach pane (teach.tsx), and the output style's emoji rules are shown in the /emoji-rules pane
 // (rules.ts, rules-pane.tsx). Every call on the engine is made here.
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register } from 'claude-code'
+import type { EngineInterface, FsEntry, Register } from 'claude-code'
 
 import type { Emoji, EmojiDraft, EmojiRules } from '../types'
-import { ENTRIES_FILE, MIME_TYPES, NAME, SVG_LIMIT, isAnimatedWebp, parseEntries, withEntry, wrapImage } from './folder'
+import { ENTRIES_FILE, MIME_TYPES, NAME, SVG_LIMIT, isAnimatedWebp, parseEntries, withEntry, wrapImage, wrappedLength } from './folder'
 import { hasEmoji } from './markdown'
 import { drawReply } from './reply'
 import { emojiSection, frontmatterName, parseEmojiRules } from './rules'
 import { drawRulesPane } from './rules-pane'
-import { drawTeachPane } from './teach'
+import { drawTeachPane, listed } from './teach'
 
 const emojis = atom({ plugin: 'inline-emoji', key: 'emojis' } as const, {} as Record<string, Emoji>)
 const folder = atom({ plugin: 'inline-emoji', key: 'folder' } as const, '')
-const page = atom({ plugin: 'inline-emoji', key: 'page' } as const, 0)
+const pageStart = atom({ plugin: 'inline-emoji', key: 'pageStart' } as const, 0)
 const isUndescribedOnly = atom({ plugin: 'inline-emoji', key: 'isUndescribedOnly' } as const, false)
 const drafts = atom({ plugin: 'inline-emoji', key: 'drafts' } as const, {} as Record<string, EmojiDraft>)
 const notice = atom({ plugin: 'inline-emoji', key: 'notice' } as const, '')
@@ -47,9 +47,9 @@ export const register: Register = (on, options) => {
       isDeferred: false,
     })
     await reload($, options)
-    // The pane opens by itself once, ever, while some emoji has no context yet.
+    // The pane opens by itself once, ever, in a session someone is at, while some emoji has no context yet.
     const all = Object.values(await read($, emojis))
-    if (!(await $.store.get(AUTO_OPENED)) && all.some(emoji => !emoji.use)) {
+    if (e.isInteractive && !(await $.store.get(AUTO_OPENED)) && all.some(emoji => !emoji.use)) {
       await $.store.set(AUTO_OPENED, true)
       void $.ui.open({ id: TEACH_PANE, title: 'Teach emoji' })
     }
@@ -115,7 +115,7 @@ export const register: Register = (on, options) => {
       all: Object.values(await read($, emojis)),
       // Not `drafts`: a drawing that read it would redraw on every keystroke and move the person's cursor.
       drafts: await read($, shownDrafts),
-      page: await read($, page),
+      pageStart: await read($, pageStart),
       isUndescribedOnly: await read($, isUndescribedOnly),
       notice: await read($, notice),
     }
@@ -126,16 +126,20 @@ export const register: Register = (on, options) => {
         await save($, file)
         await showDrafts($)
       },
-      // A page turn saves what is typed on the page first, and stays put when a name will not do.
-      goTo: async (to: number, files: string[]) => {
+      // A page turn saves what is typed on the page first, and stays put when a name will not do. The new page
+      // starts at `anchor`, wherever it now is, since saved emoji leave the filtered list.
+      goTo: async (anchor: string | undefined, files: string[]) => {
         const isSaved = await saveAll($, files)
         await showDrafts($)
-        if (isSaved) await update($, page, () => to)
+        if (!isSaved || anchor === undefined) return
+        const all = Object.values(await read($, emojis))
+        const at = listed(all, await read($, isUndescribedOnly)).findIndex(emoji => emoji.file === anchor)
+        if (at >= 0) await update($, pageStart, () => at)
       },
       toggleFilter: async () => {
         await showDrafts($)
         await update($, isUndescribedOnly, value => !value)
-        await update($, page, () => 0)
+        await update($, pageStart, () => 0)
       },
       finish: () => finish($),
     }
@@ -162,6 +166,12 @@ export const register: Register = (on, options) => {
     await update($, focused, () => '')
     return next(e)
   })
+
+  // Ending the session with the pane open saves what is typed in it.
+  on('session.end', async ($, e, next) => {
+    await saveAll($)
+    return next(e)
+  })
 }
 
 // Reads the rules again and opens the viewer.
@@ -182,13 +192,13 @@ async function readRules($: EngineInterface): Promise<EmojiRules> {
   const settings = await $.settings.read({})
   const style = typeof settings.outputStyle === 'string' ? settings.outputStyle : undefined
   if (!style) return { ...none, problem: 'No output style is chosen in the settings.' }
-  const home = (await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME')) ?? '.'
-  for (const dir of [STYLE_FOLDER, `${home}/${STYLE_FOLDER}`]) {
+  for (const dir of [STYLE_FOLDER, `${await homeFolder($)}/${STYLE_FOLDER}`]) {
     for (const file of await $.fs.list(dir).catch(() => [])) {
-      if (file.kind !== 'file' || !file.name.endsWith('.md')) continue
+      if (!file.name.endsWith('.md') || (await kindOf($, dir, file)).kind !== 'file') continue
       const guide = `${dir}/${file.name}`
       const text = await $.fs.read(guide)
-      if (frontmatterName(text) !== style) continue
+      // A style without a name in its frontmatter is named after its file.
+      if ((frontmatterName(text) ?? file.name.slice(0, -'.md'.length)) !== style) continue
       const section = emojiSection(text)
       if (section === undefined) return { ...none, style, guide, problem: 'This output style has no "## Emoji" section.' }
       return { style, guide, ...parseEmojiRules(section) }
@@ -205,22 +215,48 @@ async function reload($: EngineInterface, options: Record<string, unknown>) {
   return { path, count: Object.keys(loaded).length, skipped }
 }
 
-// The folder the options name, else ~/.claude/emojis.
+async function homeFolder($: EngineInterface): Promise<string> {
+  return (await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME')) ?? '.'
+}
+
+// The folder the options name, a leading ~ standing for the home folder, else ~/.claude/emojis.
 async function emojiFolder($: EngineInterface, options: Record<string, unknown>): Promise<string> {
   const chosen = typeof options.folder === 'string' ? options.folder.trim() : ''
-  if (chosen) return chosen
-  const home = (await $.env.get('USERPROFILE')) ?? (await $.env.get('HOME')) ?? '.'
-  return `${home}/.claude/emojis`
+  if (/^~(?:[\\/]|$)/.test(chosen)) return `${await homeFolder($)}${chosen.slice(1)}`
+  return chosen || `${await homeFolder($)}/.claude/emojis`
+}
+
+// A listed entry's kind and size, followed through a symbolic link.
+async function kindOf($: EngineInterface, dir: string, entry: FsEntry): Promise<Pick<FsEntry, 'kind' | 'size'>> {
+  if (!entry.isLink) return entry
+  return $.fs.stat(`${dir}/${entry.name}`).catch(() => ({ kind: 'other' as const, size: 0 }))
+}
+
+// emojis.json's text: '{}' when there is none, undefined when it is there but cannot be read.
+async function readEntries($: EngineInterface, path: string): Promise<string | undefined> {
+  try {
+    return await $.fs.read(path)
+  } catch {
+    return (await $.fs.exists(path)) ? undefined : '{}'
+  }
 }
 
 // Every usable image in the folder, by name, and why the others were left out.
 async function loadEmojis($: EngineInterface, path: string) {
   const loaded: Record<string, Emoji> = {}
   const skipped: string[] = []
-  const files = await $.fs.list(path).catch(() => [])
-  const { entries, problem } = parseEntries(await $.fs.read(`${path}/${ENTRIES_FILE}`).catch(() => '{}'))
+  let entriesListed: FsEntry[] = []
+  try {
+    entriesListed = await $.fs.list(path)
+  } catch (error) {
+    skipped.push(`${path} (could not be read: ${reason(error)})`)
+  }
+  const text = await readEntries($, `${path}/${ENTRIES_FILE}`)
+  if (text === undefined) skipped.push(`${ENTRIES_FILE} (could not be read)`)
+  const { entries, problem } = parseEntries(text ?? '{}')
   if (problem) skipped.push(problem)
-  for (const file of files) {
+  for (const entry of entriesListed) {
+    const file = { ...entry, ...(await kindOf($, path, entry)) }
     const dot = file.name.lastIndexOf('.')
     const ext = file.name.slice(dot + 1).toLowerCase()
     const stem = file.name.slice(0, dot)
@@ -236,23 +272,42 @@ async function loadEmojis($: EngineInterface, path: string) {
       skipped.push(`${file.name} (:${name}: is already ${holder.file})`)
       continue
     }
-    const base64 = mime ? (await $.fs.read(`${path}/${file.name}`, { as: 'bytes' })).base64 : ''
-    const source = mime ? wrapImage(mime, base64) : await $.fs.read(`${path}/${file.name}`)
+    const tooLarge = `${file.name} (too large; save it at 64 px or smaller)`
+    if (wrappedLength(mime, file.size) > SVG_LIMIT) {
+      skipped.push(tooLarge)
+      continue
+    }
+    let base64 = ''
+    let source: string
+    try {
+      base64 = mime ? (await $.fs.read(`${path}/${file.name}`, { as: 'bytes' })).base64 : ''
+      source = mime ? wrapImage(mime, base64) : await $.fs.read(`${path}/${file.name}`)
+    } catch (error) {
+      skipped.push(`${file.name} (could not be read: ${reason(error)})`)
+      continue
+    }
     if (source.length > SVG_LIMIT) {
-      skipped.push(`${file.name} (too large; save it at 64 px or smaller)`)
+      skipped.push(tooLarge)
       continue
     }
     const isAnimated = ext === 'gif' || (ext === 'webp' && isAnimatedWebp(base64))
     const thumb = isAnimated ? await readThumb($, path, stem) : undefined
-    loaded[name] = { name, file: stem, source, isAnimated, thumb, use: entries[stem]?.use }
+    if (thumb === null) skipped.push(`thumbs/${stem}.png (too large; save it at 64 px or smaller)`)
+    loaded[name] = { name, file: stem, source, isAnimated, thumb: thumb ?? undefined, use: entries[stem]?.use }
   }
   return { loaded, skipped }
 }
 
-// thumbs/<file>.png as an SVG, when the folder has one.
-async function readThumb($: EngineInterface, path: string, stem: string): Promise<string | undefined> {
+// thumbs/<file>.png as an SVG when the folder has one, or null when it is too large to draw.
+async function readThumb($: EngineInterface, path: string, stem: string): Promise<string | null | undefined> {
   const bytes = await $.fs.read(`${path}/thumbs/${stem}.png`, { as: 'bytes' }).catch(() => undefined)
-  return bytes ? wrapImage('image/png', bytes.base64) : undefined
+  if (!bytes) return undefined
+  const thumb = wrapImage('image/png', bytes.base64)
+  return thumb.length > SVG_LIMIT ? null : thumb
+}
+
+function reason(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }
 
 async function updateDraft($: EngineInterface, file: string, change: EmojiDraft) {
@@ -266,7 +321,7 @@ async function showDrafts($: EngineInterface) {
 }
 
 // Saves one emoji's typed name and context to emojis.json; false, with the reason in the pane's notice, when the
-// name will not do or the file cannot be written.
+// name will not do or the file cannot be read or written.
 async function save($: EngineInterface, file: string): Promise<boolean> {
   const all = await read($, emojis)
   const emoji = Object.values(all).find(one => one.file === file)
@@ -284,12 +339,22 @@ async function save($: EngineInterface, file: string): Promise<boolean> {
     return false
   }
   const path = `${await read($, folder)}/${ENTRIES_FILE}`
-  const { entries, problem } = parseEntries(await $.fs.read(path).catch(() => '{}'))
+  const text = await readEntries($, path)
+  if (text === undefined) {
+    await update($, notice, () => `Not saved: ${path} could not be read.`)
+    return false
+  }
+  const { raw, problem } = parseEntries(text)
   if (problem) {
     await update($, notice, () => `Not saved: ${problem}.`)
     return false
   }
-  await $.fs.write(path, withEntry(entries, file, { name: name === file.toLowerCase() ? undefined : name, use }))
+  try {
+    await $.fs.write(path, withEntry(raw, file, { name: name === file.toLowerCase() ? undefined : name, use }))
+  } catch (error) {
+    await update($, notice, () => `Not saved: ${path} could not be written (${reason(error)}).`)
+    return false
+  }
   await update($, emojis, current => {
     const { [emoji.name]: _, ...rest } = current
     return { ...rest, [name]: { ...emoji, name, use: use || undefined } }
